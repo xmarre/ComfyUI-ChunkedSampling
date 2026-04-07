@@ -18,6 +18,14 @@ except Exception:  # pragma: no cover
     cv2 = None
 
 
+def _temporal_rgb_view(image: torch.Tensor) -> torch.Tensor:
+    if image.ndim != 4:
+        raise ValueError(f"expected IMAGE tensor with shape [B,H,W,C], got {tuple(image.shape)}")
+    if image.shape[-1] > 3:
+        return image[..., :3]
+    return image
+
+
 def _frame_batch_size(images: torch.Tensor) -> int:
     if images.ndim != 4:
         raise ValueError(f"expected IMAGE tensor with shape [B,H,W,C], got {tuple(images.shape)}")
@@ -283,6 +291,7 @@ def _resolve_temporal_prior(
         )
         if warped_frame is None:
             raise ValueError("external_warped_prev requires warped_previous_images after the first frame")
+        warped_frame = _temporal_rgb_view(warped_frame)
         return _blend_images(current_frame, warped_frame, temporal_strength, confidence=external_mask), warped_frame
 
     if temporal_mode == "internal_flow_warp":
@@ -397,9 +406,6 @@ class FluxVideoCleanupTemporalAdvanced:
         if batch_size == 0:
             raise ValueError("images batch must not be empty")
 
-        _validate_optional_frame_batch("warped_previous_images", warped_previous_images, batch_size)
-        _validate_optional_mask_batch("flow_confidence", flow_confidence, batch_size)
-
         if temporal_mode == "off":
             latents = encode_image_batch_chunked(
                 images,
@@ -434,6 +440,9 @@ class FluxVideoCleanupTemporalAdvanced:
             )
             return decoded, sampled, denoised, reset_mask
 
+        _validate_optional_frame_batch("warped_previous_images", warped_previous_images, batch_size)
+        _validate_optional_mask_batch("flow_confidence", flow_confidence, batch_size)
+
         previous_input = None
         previous_output = None
         output_images = []
@@ -442,7 +451,7 @@ class FluxVideoCleanupTemporalAdvanced:
         reset_values = []
 
         for frame_index in range(batch_size):
-            current_frame = _single_frame(images, frame_index)
+            current_frame = _temporal_rgb_view(_single_frame(images, frame_index))
             should_reset = _compute_reset(
                 frame_index,
                 previous_input,
