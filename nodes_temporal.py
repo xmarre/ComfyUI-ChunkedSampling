@@ -140,6 +140,13 @@ def _mask_to_image_weight(mask: Optional[torch.Tensor], reference_image: torch.T
     mask = mask.to(device=reference_image.device, dtype=reference_image.dtype)
     if mask.shape[0] == 1 and reference_image.shape[0] != 1:
         mask = mask.expand(reference_image.shape[0], -1, -1)
+    if mask.shape[1:3] != reference_image.shape[1:3]:
+        mask = F.interpolate(
+            mask.unsqueeze(1),
+            size=reference_image.shape[1:3],
+            mode="bilinear",
+            align_corners=False,
+        ).squeeze(1)
 
     return mask.unsqueeze(-1).clamp(0.0, 1.0)
 
@@ -268,19 +275,21 @@ def _resolve_temporal_prior(
     if temporal_mode == "off" or frame_index == 0 or previous_output is None:
         return current_frame, None
 
-    external_mask = _extract_optional_mask("flow_confidence", flow_confidence_mask, frame_index, batch_size)
-    if external_mask is not None:
-        external_mask = external_mask * float(flow_confidence_scale)
-    elif flow_confidence_scale < 1.0:
-        external_mask = torch.full(
-            (1, current_frame.shape[1], current_frame.shape[2]),
-            float(flow_confidence_scale),
-            device=current_frame.device,
-            dtype=current_frame.dtype,
-        )
-
     if temporal_mode == "prev_output_blend":
         return _blend_images(current_frame, previous_output, temporal_strength), None
+
+    external_mask = None
+    if temporal_mode in {"external_warped_prev", "internal_flow_warp"}:
+        external_mask = _extract_optional_mask("flow_confidence", flow_confidence_mask, frame_index, batch_size)
+        if external_mask is not None:
+            external_mask = external_mask * float(flow_confidence_scale)
+        elif flow_confidence_scale < 1.0:
+            external_mask = torch.full(
+                (1, current_frame.shape[1], current_frame.shape[2]),
+                float(flow_confidence_scale),
+                device=current_frame.device,
+                dtype=current_frame.dtype,
+            )
 
     if temporal_mode == "external_warped_prev":
         warped_frame = _extract_optional_frame(
@@ -361,9 +370,30 @@ class FluxVideoCleanupTemporalAdvanced:
                     },
                 ),
                 "decode_chunk_size": ("INT", {"default": 8, "min": 1, "max": 4096}),
-                "auto_reduce_on_oom": ("BOOLEAN", {"default": True}),
-                "min_chunk_size": ("INT", {"default": 1, "min": 1, "max": 4096}),
-                "clear_cache_on_retry": ("BOOLEAN", {"default": True, "advanced": True}),
+                "auto_reduce_on_oom": (
+                    "BOOLEAN",
+                    {
+                        "default": True,
+                        "tooltip": "Only used when temporal_mode is off. Temporal recurrence always samples one frame at a time.",
+                    },
+                ),
+                "min_chunk_size": (
+                    "INT",
+                    {
+                        "default": 1,
+                        "min": 1,
+                        "max": 4096,
+                        "tooltip": "Only used when temporal_mode is off. Temporal recurrence always samples one frame at a time.",
+                    },
+                ),
+                "clear_cache_on_retry": (
+                    "BOOLEAN",
+                    {
+                        "default": True,
+                        "advanced": True,
+                        "tooltip": "Only used when temporal_mode is off. Temporal recurrence does not use chunk-size retry fallback.",
+                    },
+                ),
                 "clear_cache_between_chunks": ("BOOLEAN", {"default": False, "advanced": True}),
             },
             "optional": {
@@ -440,8 +470,10 @@ class FluxVideoCleanupTemporalAdvanced:
             )
             return decoded, sampled, denoised, reset_mask
 
-        _validate_optional_frame_batch("warped_previous_images", warped_previous_images, batch_size)
-        _validate_optional_mask_batch("flow_confidence", flow_confidence, batch_size)
+        if temporal_mode == "external_warped_prev":
+            _validate_optional_frame_batch("warped_previous_images", warped_previous_images, batch_size)
+        if temporal_mode in {"external_warped_prev", "internal_flow_warp"}:
+            _validate_optional_mask_batch("flow_confidence", flow_confidence, batch_size)
 
         previous_input = None
         previous_output = None
