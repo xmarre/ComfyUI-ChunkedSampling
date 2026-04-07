@@ -53,9 +53,11 @@ def _repeat_and_slice_batch_tensor(value: torch.Tensor, start: int, end: int, fu
     if value.shape[0] == 1:
         return value
     if value.shape[0] < full_batch_size:
-        reps = (math.ceil(full_batch_size / value.shape[0]),) + ((1,) * (value.ndim - 1))
-        expanded = value.repeat(reps)[:full_batch_size]
-        return expanded[start:end]
+        window_len = end - start
+        offset = start % value.shape[0]
+        reps = (math.ceil((offset + window_len) / value.shape[0]),) + ((1,) * (value.ndim - 1))
+        expanded = value.repeat(reps)
+        return expanded[offset:offset + window_len]
     return value[start:end]
 
 
