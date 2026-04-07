@@ -265,6 +265,7 @@ class SamplerCustomAdvancedChunked:
             attempt_size = min(effective_chunk_size, batch_size - start)
             end = start + attempt_size
             latent_chunk = _slice_latent_dict(working_latent, start, end, batch_size)
+            retry_after_oom = False
 
             try:
                 samples_chunk, denoised_chunk, has_x0 = _run_sampler_chunk(noise, guider, sampler, sigmas, latent_chunk)
@@ -279,6 +280,10 @@ class SamplerCustomAdvancedChunked:
                 effective_chunk_size = new_chunk_size
                 if not synthetic_batch_index and "batch_index" not in original_latent and batch_size > effective_chunk_size:
                     working_latent, synthetic_batch_index = _append_batch_index_if_needed(original_latent, True)
+                retry_after_oom = True
+
+            if retry_after_oom:
+                latent_chunk = None
                 if clear_cache_on_retry:
                     _soft_clear_cache()
                 continue
