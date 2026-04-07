@@ -14,7 +14,7 @@ from .core_sampling import (
 
 try:
     import cv2  # type: ignore
-except Exception:  # pragma: no cover
+except ImportError:  # pragma: no cover
     cv2 = None
 
 
@@ -167,8 +167,8 @@ def _ensure_same_image_shape(current: torch.Tensor, previous: torch.Tensor, cont
 
 
 def _frame_difference_score(previous_frame: torch.Tensor, current_frame: torch.Tensor) -> float:
-    previous = _ensure_same_image_shape(current_frame, previous_frame, "previous input")
-    return float(torch.mean(torch.abs(current_frame - previous)).item())
+    aligned_previous = _ensure_same_image_shape(current_frame, previous_frame, "previous input")
+    return float(torch.mean(torch.abs(current_frame - aligned_previous)).item())
 
 
 def _compute_reset(
